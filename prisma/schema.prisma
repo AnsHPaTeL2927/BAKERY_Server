@@ -1,0 +1,290 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Status {
+  DRAFT
+  LIVE
+  HIDDEN
+}
+
+enum AnalyticsType {
+  PAGE_VIEW
+  ORDER_CLICK
+  WHATSAPP_CLICK
+  CALL_CLICK
+  GALLERY_VIEW
+  PRODUCT_VIEW
+}
+
+enum MessageStatus {
+  NEW
+  READ
+  ARCHIVED
+}
+
+enum OrderType {
+  PICKUP
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+}
+
+model Admin {
+  id             Int            @id @default(autoincrement())
+  name           String
+  email          String         @unique
+  passwordHash   String
+  failedAttempts Int            @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  otpCodes       OtpCode[]
+  refreshTokens  RefreshToken[]
+  auditLogs      AuditLog[]
+
+  @@map("admins")
+}
+
+model OtpCode {
+  id         Int       @id @default(autoincrement())
+  adminId    Int
+  admin      Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([adminId])
+  @@map("otp_codes")
+}
+
+model RefreshToken {
+  id         Int       @id @default(autoincrement())
+  adminId    Int
+  admin      Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  tokenHash  String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?   @db.VarChar(512)
+  ip         String?   @db.VarChar(64)
+  createdAt  DateTime  @default(now())
+
+  @@index([adminId])
+  @@map("refresh_tokens")
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String
+  slug      String    @unique
+  image     String?
+  status    Status    @default(LIVE)
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id            Int            @id @default(autoincrement())
+  name          String
+  slug          String         @unique
+  categoryId    Int?
+  category      Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  description   String         @db.Text
+  weights       Json
+  priceByWeight Json
+  flavours      Json
+  featured      Boolean        @default(false)
+  available     Boolean        @default(true)
+  status        Status         @default(LIVE)
+  sortOrder     Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  images        ProductImage[]
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+model ProductImage {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  isPrimary Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+model Gallery {
+  id        Int      @id @default(autoincrement())
+  image     String
+  alt       String?
+  category  String?
+  status    Status   @default(LIVE)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("gallery")
+}
+
+model Offer {
+  id          Int      @id @default(autoincrement())
+  festival    String
+  title       String
+  description String   @db.Text
+  banner      String?
+  discount    String
+  ctaText     String
+  startDate   DateTime
+  endDate     DateTime
+  active      Boolean  @default(false)
+  priority    Int      @default(0)
+  status      Status   @default(LIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("offers")
+}
+
+model HeroBanner {
+  id        Int      @id @default(autoincrement())
+  image     String
+  title     String?
+  subtitle  String?
+  ctaText   String?
+  ctaLink   String?
+  priority  Int      @default(0)
+  status    Status   @default(LIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("hero_banners")
+}
+
+model Testimonial {
+  id        Int      @id @default(autoincrement())
+  name      String
+  photo     String?
+  rating    Int      @default(5)
+  review    String   @db.Text
+  approved  Boolean  @default(true)
+  featured  Boolean  @default(false)
+  status    Status   @default(LIVE)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("testimonials")
+}
+
+model WebsiteSettings {
+  id          Int      @id @default(1)
+  siteName    String
+  tagline     String?
+  description String?  @db.Text
+  phone       String?
+  whatsapp    String?
+  email       String?
+  address     String?
+  hours       String?
+  instagram   String?
+  facebook    String?
+  logo        String?
+  favicon     String?
+  status      Status   @default(LIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("website_settings")
+}
+
+model ContactMessage {
+  id        Int           @id @default(autoincrement())
+  name      String
+  email     String
+  phone     String?
+  message   String        @db.Text
+  status    MessageStatus @default(NEW)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@map("contact_messages")
+}
+
+model Analytics {
+  id        Int           @id @default(autoincrement())
+  type      AnalyticsType
+  refId     Int?
+  date      DateTime      @db.Date
+  createdAt DateTime      @default(now())
+
+  @@index([type, date])
+  @@map("analytics")
+}
+
+model Order {
+  id              Int           @id @default(autoincrement())
+  orderNumber     String        @unique
+  customerName    String
+  phone           String
+  productName     String
+  quantity        Int
+  totalAmount     Decimal       @db.Decimal(10, 2)
+  advancePaid     Decimal       @default(0) @db.Decimal(10, 2)
+  remainingAmount Decimal       @db.Decimal(10, 2)
+  orderType       OrderType     @default(PICKUP)
+  pickupDatetime  DateTime
+  status          OrderStatus   @default(PENDING)
+  paymentStatus   PaymentStatus @default(PENDING)
+  notes           String?       @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([status])
+  @@index([pickupDatetime])
+  @@map("orders")
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  adminId    Int?
+  admin      Admin?   @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String?
+  entityId   Int?
+  meta       Json?
+  ip         String?  @db.VarChar(64)
+  createdAt  DateTime @default(now())
+
+  @@index([adminId])
+  @@map("audit_logs")
+}
