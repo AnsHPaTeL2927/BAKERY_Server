@@ -9,6 +9,8 @@ const router = express.Router();
 router.get('/', validate(listOrdersSchema), controller.list);
 router.post('/', validate(createOrderSchema), controller.create);
 router.put('/:id', validate(updateOrderSchema), controller.update);
+router.post('/:id/invoice', validate(idOnlySchema), controller.generateInvoicePdf);
+router.get('/:id/timeline', validate(idOnlySchema), controller.getTimeline);
 router.delete('/:id', validate(idOnlySchema), controller.remove);
 
 module.exports = router;

@@ -3,19 +3,58 @@ const { asyncHandler, ApiError } = require('../../middleware/errorHandler');
 const { saveProcessedImage, deleteImageByUrl } = require('../../services/imageService');
 const { logAction } = require('../../services/auditService');
 
+function minPriceOf(product) {
+  const prices = Object.values(product.priceByWeight || {});
+  return prices.length ? Math.min(...prices) : 0;
+}
+
 const list = asyncHandler(async (req, res) => {
-  const { search, status, page, pageSize, categoryId } = req.query;
+  const { search, status, page, pageSize, categoryId, featured, available, minPrice, maxPrice, sort } = req.query;
   const where = {
     ...(status ? { status } : {}),
     ...(categoryId ? { categoryId } : {}),
     ...(search ? { name: { contains: search } } : {}),
+    ...(featured !== undefined ? { featured: featured === 'true' } : {}),
+    ...(available !== undefined ? { available: available === 'true' } : {}),
   };
+  const orderBy = sort
+    ? [{ createdAt: sort === 'newest' ? 'desc' : 'asc' }, { id: 'asc' }]
+    : [{ sortOrder: 'asc' }, { id: 'asc' }];
+
+  const hasPriceFilter = minPrice !== undefined || maxPrice !== undefined;
+
+  if (hasPriceFilter) {
+    // priceByWeight is a JSON map of weight -> price with no fixed keys, so a
+    // range filter can't be expressed as a plain SQL WHERE clause here — filter
+    // in application code instead of adding a dedicated min/max price column.
+    const all = await prisma.product.findMany({
+      where,
+      include: { images: { orderBy: { sortOrder: 'asc' } }, category: { select: { id: true, name: true, slug: true } } },
+      orderBy,
+    });
+    const filtered = all.filter((p) => {
+      const price = minPriceOf(p);
+      if (minPrice !== undefined && price < minPrice) return false;
+      if (maxPrice !== undefined && price > maxPrice) return false;
+      return true;
+    });
+    const total = filtered.length;
+    const pageItems = filtered.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+
+    res.json({
+      items: pageItems.map((p) => ({ ...p, image: p.images.find((i) => i.isPrimary)?.url || p.images[0]?.url || null })),
+      total,
+      page,
+      pageSize,
+    });
+    return;
+  }
 
   const [items, total] = await Promise.all([
     prisma.product.findMany({
       where,
       include: { images: { orderBy: { sortOrder: 'asc' } }, category: { select: { id: true, name: true, slug: true } } },
-      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),

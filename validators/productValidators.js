@@ -51,7 +51,14 @@ const updateProductSchema = z.object({
 
 const listProductsSchema = z.object({
   body: z.object({}).optional(),
-  query: listQuerySchema.extend({ categoryId: z.coerce.number().int().positive().optional() }),
+  query: listQuerySchema.extend({
+    categoryId: z.coerce.number().int().positive().optional(),
+    featured: z.enum(['true', 'false']).optional(),
+    available: z.enum(['true', 'false']).optional(),
+    minPrice: z.coerce.number().nonnegative().optional(),
+    maxPrice: z.coerce.number().nonnegative().optional(),
+    sort: z.enum(['newest', 'oldest']).optional(),
+  }),
   params: z.object({}).optional(),
 });
 

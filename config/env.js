@@ -24,9 +24,12 @@ const envSchema = z.object({
   SMTP_PASS: z.string().min(1),
   SMTP_FROM: z.string().min(1),
 
-  ADMIN_NAME: z.string().default('Admin'),
-  ADMIN_EMAIL: z.string().email(),
-  ADMIN_PASSWORD: z.string().min(8),
+  // Only used by the one-off seed script to bootstrap the very first admin
+  // account — ongoing login/password management lives entirely in the
+  // database (Admin.passwordHash), so these are optional at runtime.
+  ADMIN_NAME: z.string().optional(),
+  ADMIN_EMAIL: z.string().email().optional(),
+  ADMIN_PASSWORD: z.string().min(8).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

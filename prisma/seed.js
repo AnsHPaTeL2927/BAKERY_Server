@@ -112,17 +112,32 @@ const testimonials = [
 ];
 
 async function main() {
-  const passwordHash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
-  await prisma.admin.upsert({
-    where: { email: process.env.ADMIN_EMAIL },
-    update: {},
-    create: {
-      name: process.env.ADMIN_NAME || 'Admin',
-      email: process.env.ADMIN_EMAIL,
-      passwordHash,
-    },
-  });
-  console.log(`Admin seeded: ${process.env.ADMIN_EMAIL}`);
+  // Admin accounts live entirely in the database from here on — these env
+  // vars are only read once, to bootstrap the very first admin on a brand
+  // new database. If they're absent (the normal case after initial setup),
+  // skip silently; use an existing admin's "Forgot Password" flow instead.
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    const passwordHash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
+    await prisma.admin.upsert({
+      where: { email: process.env.ADMIN_EMAIL },
+      update: {},
+      create: {
+        name: process.env.ADMIN_NAME || 'Admin',
+        email: process.env.ADMIN_EMAIL,
+        passwordHash,
+      },
+    });
+    console.log(`Admin seeded: ${process.env.ADMIN_EMAIL}`);
+  } else {
+    const existingAdminCount = await prisma.admin.count();
+    if (existingAdminCount === 0) {
+      console.warn(
+        'No ADMIN_EMAIL/ADMIN_PASSWORD set and no admin account exists yet — set them temporarily to seed the first admin, or insert one directly into the database.',
+      );
+    } else {
+      console.log('Admin bootstrap skipped (ADMIN_EMAIL/ADMIN_PASSWORD not set) — admin accounts already exist in the database.');
+    }
+  }
 
   await prisma.websiteSettings.upsert({
     where: { id: 1 },

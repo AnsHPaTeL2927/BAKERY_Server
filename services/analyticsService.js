@@ -69,12 +69,13 @@ async function getDashboardStats() {
   const todayEnd = new Date(today.getTime() + 24 * 60 * 60 * 1000);
   const reminderWindowEnd = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
-  const [orderStatusGroups, todayRevenueAgg, monthRevenueAgg, reminderRows] = await Promise.all([
+  const [orderStatusGroups, todayRevenueAgg, todayOrdersCount, monthRevenueAgg, reminderRows] = await Promise.all([
     prisma.order.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.order.aggregate({
       _sum: { totalAmount: true },
       where: { pickupDatetime: { gte: today, lt: todayEnd }, status: { not: 'CANCELLED' } },
     }),
+    prisma.order.count({ where: { createdAt: { gte: today, lt: todayEnd } } }),
     prisma.order.aggregate({
       _sum: { totalAmount: true },
       where: { pickupDatetime: { gte: monthStart, lt: nextMonthStart }, status: { not: 'CANCELLED' } },
@@ -98,6 +99,7 @@ async function getDashboardStats() {
     ready: orderStatusCounts.READY || 0,
     delivered: orderStatusCounts.DELIVERED || 0,
     cancelled: orderStatusCounts.CANCELLED || 0,
+    todayOrders: todayOrdersCount,
     todayRevenue: Number(todayRevenueAgg._sum.totalAmount || 0),
     monthlyRevenue: Number(monthRevenueAgg._sum.totalAmount || 0),
   };

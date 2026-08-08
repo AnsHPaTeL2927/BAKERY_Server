@@ -16,6 +16,14 @@ const otpLimiter = rateLimit({
   message: { message: 'Too many verification attempts. Please try again later.' },
 });
 
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many password reset attempts. Please try again later.' },
+});
+
 const contactLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   limit: 10,
@@ -40,4 +48,4 @@ const publicApiLimiter = rateLimit({
   message: { message: 'Too many requests. Please slow down.' },
 });
 
-module.exports = { loginLimiter, otpLimiter, contactLimiter, analyticsLimiter, publicApiLimiter };
+module.exports = { loginLimiter, otpLimiter, passwordResetLimiter, contactLimiter, analyticsLimiter, publicApiLimiter };

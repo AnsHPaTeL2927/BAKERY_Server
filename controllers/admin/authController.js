@@ -3,21 +3,23 @@ const prisma = require('../../config/prisma');
 const env = require('../../config/env');
 const { asyncHandler, ApiError } = require('../../middleware/errorHandler');
 const { issueOtp, verifyOtp, sendLoginNotification } = require('../../services/otpService');
+const { issuePasswordReset, verifyResetCode } = require('../../services/passwordResetService');
 const { logAction } = require('../../services/auditService');
 const { addDuration } = require('../../services/duration');
 const {
   signAccessToken,
   signOtpSessionToken,
-  verifyOtpSessionToken,
   generateRefreshToken,
   hashRefreshToken,
 } = require('../../services/tokenService');
 const {
+  getCookieOptions,
   setOtpSessionCookie,
   setAccessTokenCookie,
   setRefreshTokenCookie,
   clearAuthCookies,
 } = require('../../services/cookies');
+const { getOtpSessionAdminId } = require('../../services/otpSession');
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_DURATION = '15m';
@@ -26,16 +28,6 @@ function toPublicAdmin(admin) {
   return { id: admin.id, name: admin.name, email: admin.email };
 }
 
-function getOtpSessionAdminId(req) {
-  const token = req.cookies?.otp_session;
-  if (!token) return null;
-  try {
-    const payload = verifyOtpSessionToken(token);
-    return payload.sub;
-  } catch {
-    return null;
-  }
-}
 
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -79,7 +71,11 @@ const login = asyncHandler(async (req, res) => {
   const otpSessionToken = signOtpSessionToken(admin.id);
   setOtpSessionCookie(res, otpSessionToken);
 
-  res.json({ message: 'A verification code has been sent to your email.', email: admin.email });
+  res.json({
+    message: 'A verification code has been sent to your email.',
+    email: admin.email,
+    otpSessionToken,
+  });
 });
 
 const verify = asyncHandler(async (req, res) => {
@@ -114,7 +110,7 @@ const verify = asyncHandler(async (req, res) => {
 
   await prisma.admin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } });
 
-  res.clearCookie('otp_session', { httpOnly: true, sameSite: 'lax', path: '/' });
+  res.clearCookie('otp_session', getCookieOptions());
   setAccessTokenCookie(res, accessToken);
   setRefreshTokenCookie(res, refreshTokenRaw);
 
@@ -206,4 +202,43 @@ const logout = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
-module.exports = { login, verify, resendOtp, me, refresh, logout };
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const admin = await prisma.admin.findUnique({ where: { email } });
+
+  if (admin) {
+    await issuePasswordReset(admin);
+    await logAction({ adminId: admin.id, action: 'PASSWORD_RESET_REQUESTED', ip: req.ip });
+  }
+
+  // Identical response whether or not the email is registered, so this
+  // endpoint can't be used to enumerate admin accounts.
+  res.json({ message: 'If that email is registered, a reset code has been sent.' });
+});
+
+const resetPassword = asyncHandler(async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  const admin = await prisma.admin.findUnique({ where: { email } });
+  if (!admin) {
+    throw new ApiError(400, 'Invalid or expired reset code.');
+  }
+
+  const result = await verifyResetCode(admin, code);
+  if (!result.ok) {
+    throw new ApiError(400, result.reason);
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await prisma.admin.update({
+    where: { id: admin.id },
+    data: { passwordHash, failedAttempts: 0, lockedUntil: null },
+  });
+
+  // A password reset should invalidate every existing session, not just force a re-login on this device.
+  await prisma.refreshToken.updateMany({ where: { adminId: admin.id, revokedAt: null }, data: { revokedAt: new Date() } });
+
+  await logAction({ adminId: admin.id, action: 'PASSWORD_RESET_COMPLETED', ip: req.ip });
+  res.json({ ok: true, message: 'Password updated. Please log in with your new password.' });
+});
+
+module.exports = { login, verify, resendOtp, me, refresh, logout, forgotPassword, resetPassword };

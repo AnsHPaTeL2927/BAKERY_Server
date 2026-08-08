@@ -1,0 +1,8 @@
+-- AlterTable
+ALTER TABLE `contact_messages` ADD COLUMN `cakeWeight` VARCHAR(191) NULL,
+    ADD COLUMN `deliveryDate` DATETIME(3) NULL,
+    ADD COLUMN `occasion` VARCHAR(191) NULL,
+    ADD COLUMN `source` VARCHAR(191) NOT NULL DEFAULT 'CONTACT';
+
+-- AlterTable
+ALTER TABLE `orders` MODIFY `paymentStatus` ENUM('PENDING', 'PARTIAL', 'PAID', 'REFUNDED') NOT NULL DEFAULT 'PENDING';

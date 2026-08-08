@@ -46,6 +46,7 @@ enum PaymentStatus {
   PENDING
   PARTIAL
   PAID
+  REFUNDED
 }
 
 model Admin {
@@ -61,8 +62,23 @@ model Admin {
   otpCodes       OtpCode[]
   refreshTokens  RefreshToken[]
   auditLogs      AuditLog[]
+  passwordResets PasswordResetToken[]
 
   @@map("admins")
+}
+
+model PasswordResetToken {
+  id         Int       @id @default(autoincrement())
+  adminId    Int
+  admin      Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([adminId])
+  @@map("password_reset_tokens")
 }
 
 model OtpCode {
@@ -228,14 +244,18 @@ model WebsiteSettings {
 }
 
 model ContactMessage {
-  id        Int           @id @default(autoincrement())
-  name      String
-  email     String
-  phone     String?
-  message   String        @db.Text
-  status    MessageStatus @default(NEW)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id           Int           @id @default(autoincrement())
+  name         String
+  email        String
+  phone        String?
+  message      String        @db.Text
+  status       MessageStatus @default(NEW)
+  source       String        @default("CONTACT")
+  occasion     String?
+  cakeWeight   String?
+  deliveryDate DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   @@map("contact_messages")
 }
@@ -252,22 +272,28 @@ model Analytics {
 }
 
 model Order {
-  id              Int           @id @default(autoincrement())
-  orderNumber     String        @unique
-  customerName    String
-  phone           String
-  productName     String
-  quantity        Int
-  totalAmount     Decimal       @db.Decimal(10, 2)
-  advancePaid     Decimal       @default(0) @db.Decimal(10, 2)
-  remainingAmount Decimal       @db.Decimal(10, 2)
-  orderType       OrderType     @default(PICKUP)
-  pickupDatetime  DateTime
-  status          OrderStatus   @default(PENDING)
-  paymentStatus   PaymentStatus @default(PENDING)
-  notes           String?       @db.Text
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                 Int           @id @default(autoincrement())
+  orderNumber        String        @unique
+  customerName       String
+  phone              String
+  productName        String
+  quantity           Int
+  totalAmount        Decimal       @db.Decimal(10, 2)
+  discount           Decimal       @default(0) @db.Decimal(10, 2)
+  advancePaid        Decimal       @default(0) @db.Decimal(10, 2)
+  remainingAmount    Decimal       @db.Decimal(10, 2)
+  orderType          OrderType     @default(PICKUP)
+  pickupDatetime     DateTime
+  status             OrderStatus   @default(PENDING)
+  paymentStatus      PaymentStatus @default(PENDING)
+  address            String?       @db.Text
+  weight             String?
+  flavour            String?
+  notes              String?       @db.Text
+  invoicePath        String?
+  invoiceGeneratedAt DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   @@index([status])
   @@index([pickupDatetime])

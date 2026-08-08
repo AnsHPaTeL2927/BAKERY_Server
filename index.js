@@ -22,10 +22,25 @@ app.set('trust proxy', 1);
 // default same-origin resource policy would have browsers block every <img>
 // load against /uploads.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+const allowedOrigins = [
+  env.FRONTEND_URL,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://localhost:5173',
+  'https://127.0.0.1:5173',
+];
+
 app.use(
   cors({
-    // origin: env.FRONTEND_URL,
-    origin: true,
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      const isAllowedOrigin = allowedOrigins.includes(origin) || /\.trycloudflare\.com$/i.test(origin);
+      callback(null, isAllowedOrigin);
+    },
     credentials: true,
   }),
 );
@@ -38,7 +53,7 @@ if (env.NODE_ENV !== 'test') {
   app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 }
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
 app.use(absolutizeUploads);
 
 app.get('/health', (_req, res) => {
