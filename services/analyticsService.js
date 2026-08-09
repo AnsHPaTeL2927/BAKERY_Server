@@ -81,6 +81,16 @@ async function getDashboardStats() {
       where: { pickupDatetime: { gte: monthStart, lt: nextMonthStart }, status: { not: 'CANCELLED' } },
     }),
     prisma.order.findMany({
+      select: {
+        id: true,
+        orderNumber: true,
+        customerName: true,
+        productName: true,
+        phone: true,
+        orderType: true,
+        pickupDatetime: true,
+        status: true,
+      },
       where: {
         pickupDatetime: { gte: today, lte: reminderWindowEnd },
         status: { notIn: ['DELIVERED', 'CANCELLED'] },
@@ -97,7 +107,12 @@ async function getDashboardStats() {
     confirmed: orderStatusCounts.CONFIRMED || 0,
     preparing: orderStatusCounts.PREPARING || 0,
     ready: orderStatusCounts.READY || 0,
-    delivered: orderStatusCounts.DELIVERED || 0,
+    // The Orders-module widget filters by status=COMPLETED when clicked, so
+    // its count has to be the same single-enum lookup — previously this key
+    // didn't exist at all (only `delivered` did), so the widget always read
+    // undefined and silently showed 0 no matter how many orders were done.
+    completed: orderStatusCounts.COMPLETED || 0,
+    delivered: orderStatusCounts.DELIVERED || 0, // kept for AdminDashboard's existing "Delivered" widget
     cancelled: orderStatusCounts.CANCELLED || 0,
     todayOrders: todayOrdersCount,
     todayRevenue: Number(todayRevenueAgg._sum.totalAmount || 0),

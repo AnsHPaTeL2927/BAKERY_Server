@@ -38,15 +38,27 @@ enum OrderStatus {
   CONFIRMED
   PREPARING
   READY
+  OUT_FOR_DELIVERY
+  COMPLETED
   DELIVERED
   CANCELLED
 }
 
 enum PaymentStatus {
-  PENDING
-  PARTIAL
+  UNPAID
+  PARTIALLY_PAID
   PAID
   REFUNDED
+  PENDING
+  PARTIAL
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  OTHER
 }
 
 model Admin {
@@ -285,7 +297,8 @@ model Order {
   orderType          OrderType     @default(PICKUP)
   pickupDatetime     DateTime
   status             OrderStatus   @default(PENDING)
-  paymentStatus      PaymentStatus @default(PENDING)
+  paymentStatus      PaymentStatus @default(UNPAID)
+  paymentMethod      PaymentMethod @default(CASH)
   address            String?       @db.Text
   weight             String?
   flavour            String?
