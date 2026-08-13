@@ -8,6 +8,7 @@ const categoryBodySchema = z.object({
     .trim()
     .toLowerCase()
     .regex(/^[a-z0-9-]+$/, 'Slug can only contain lowercase letters, numbers, and hyphens'),
+  description: sanitizedString({ max: 240 }).optional().or(z.literal('')),
   status: statusEnum.optional(),
   sortOrder: z.coerce.number().int().optional(),
 });

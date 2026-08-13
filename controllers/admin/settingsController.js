@@ -17,17 +17,25 @@ const update = asyncHandler(async (req, res) => {
   if (req.files?.logo?.[0]) {
     logo = await saveProcessedImage(req.files.logo[0].buffer, 'logo');
     if (existing?.logo) await deleteImageByUrl(existing.logo);
+  } else if (req.body.removeLogo === 'true' && existing?.logo) {
+    await deleteImageByUrl(existing.logo);
+    logo = null;
   }
 
   if (req.files?.favicon?.[0]) {
     favicon = await saveProcessedImage(req.files.favicon[0].buffer, 'favicon');
     if (existing?.favicon) await deleteImageByUrl(existing.favicon);
+  } else if (req.body.removeFavicon === 'true' && existing?.favicon) {
+    await deleteImageByUrl(existing.favicon);
+    favicon = null;
   }
+
+  const { removeLogo, removeFavicon, ...rest } = req.body;
 
   const settings = await prisma.websiteSettings.upsert({
     where: { id: 1 },
-    update: { ...req.body, logo, favicon },
-    create: { id: 1, siteName: 'Cakes by Tulsi', ...req.body, logo, favicon },
+    update: { ...rest, logo, favicon },
+    create: { id: 1, siteName: 'Cakes by Tulsi', ...rest, logo, favicon },
   });
 
   await logAction({ adminId: req.admin.id, action: 'SETTINGS_UPDATED', entityType: 'WebsiteSettings', entityId: 1, ip: req.ip });

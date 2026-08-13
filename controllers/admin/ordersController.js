@@ -45,6 +45,15 @@ function serializeOrder(order) {
     discount: Number(order.discount),
     advancePaid: Number(order.advancePaid),
     remainingAmount: Number(order.remainingAmount),
+    ...(order.items
+      ? {
+          items: order.items.map((it) => ({
+            ...it,
+            unitPrice: Number(it.unitPrice),
+            lineTotal: Number(it.lineTotal),
+          })),
+        }
+      : {}),
   };
 }
 
@@ -53,6 +62,45 @@ function dayRange(dateStr) {
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { gte: start, lt: end };
 }
+
+// Multi-item support: an order's real product data now lives in `items`
+// (one row per product). `productName`/`quantity`/`weight`/`flavour` on the
+// Order itself are kept as a legacy mirror/summary — auto-derived here so
+// every existing display that reads those fields directly (desktop table,
+// invoice fallback, audit log) keeps working unchanged, with zero knowledge
+// that multi-item orders exist.
+function itemLineTotal(item) {
+  return Number(item.unitPrice) * Number(item.quantity);
+}
+
+function summarizeItems(items) {
+  if (!items || items.length === 0) return null;
+  const totalQty = items.reduce((sum, it) => sum + Number(it.quantity), 0);
+  const totalAmount = items.reduce((sum, it) => sum + itemLineTotal(it), 0);
+  const first = items[0];
+  return {
+    productName: items.length === 1 ? first.productName : `${first.productName} +${items.length - 1} more`,
+    quantity: totalQty,
+    totalAmount,
+    weight: first.weight || null,
+    flavour: first.flavour || null,
+  };
+}
+
+function itemsNestedWrite(items) {
+  return items.map((it, idx) => ({
+    productName: it.productName,
+    weight: it.weight || null,
+    flavour: it.flavour || null,
+    quantity: it.quantity,
+    unitPrice: it.unitPrice,
+    lineTotal: itemLineTotal(it),
+    note: it.note || null,
+    sortOrder: idx,
+  }));
+}
+
+const ORDER_INCLUDE = { items: { orderBy: { sortOrder: 'asc' } } };
 
 const list = asyncHandler(async (req, res) => {
   const {
@@ -70,6 +118,7 @@ const list = asyncHandler(async (req, res) => {
     maxAmount,
     page,
     pageSize,
+    sort,
   } = req.query;
 
   const dbStatus = status ? toDbOrderStatus(status) : undefined;
@@ -79,34 +128,51 @@ const list = asyncHandler(async (req, res) => {
     ...(minAmount !== undefined ? { gte: minAmount } : {}),
     ...(maxAmount !== undefined ? { lte: maxAmount } : {}),
   };
-  const where = {
-    ...(dbStatus ? { status: dbStatus } : {}),
-    ...(dbPaymentStatus ? { paymentStatus: dbPaymentStatus } : {}),
-    ...(orderType ? { orderType } : {}),
-    ...(date ? { pickupDatetime: dayRange(date) } : {}),
-    ...(createdDate ? { createdAt: dayRange(createdDate) } : {}),
-    ...(customerName ? { customerName: { contains: customerName } } : {}),
-    ...(phone ? { phone: { contains: phone } } : {}),
-    ...(product ? { productName: { contains: product } } : {}),
-    ...(Object.keys(amountRange).length ? { totalAmount: amountRange } : {}),
+
+  // Built as an AND-array of independent conditions (rather than merging
+  // multiple `{ OR: [...] }` blocks into one object) specifically so the
+  // `product` filter and the free-text `search` filter — both of which need
+  // their own OR clause — can coexist without one silently overwriting the
+  // other's `OR` key when spread into the same object.
+  const and = [
+    ...(dbStatus ? [{ status: dbStatus }] : []),
+    ...(dbPaymentStatus ? [{ paymentStatus: dbPaymentStatus }] : []),
+    ...(orderType ? [{ orderType }] : []),
+    ...(date ? [{ pickupDatetime: dayRange(date) }] : []),
+    ...(createdDate ? [{ createdAt: dayRange(createdDate) }] : []),
+    ...(customerName ? [{ customerName: { contains: customerName } }] : []),
+    ...(phone ? [{ phone: { contains: phone } }] : []),
+    ...(product
+      ? [{ OR: [{ productName: { contains: product } }, { items: { some: { productName: { contains: product } } } }] }]
+      : []),
+    ...(Object.keys(amountRange).length ? [{ totalAmount: amountRange }] : []),
     ...(search
-      ? {
-          OR: [
-            { customerName: { contains: search } },
-            { phone: { contains: search } },
-            { orderNumber: { contains: search } },
-            { productName: { contains: search } },
-          ],
-        }
-      : {}),
-  };
+      ? [
+          {
+            OR: [
+              { customerName: { contains: search } },
+              { phone: { contains: search } },
+              { orderNumber: { contains: search } },
+              { productName: { contains: search } },
+              { items: { some: { productName: { contains: search } } } },
+            ],
+          },
+        ]
+      : []),
+  ];
+  const where = and.length > 0 ? { AND: and } : {};
+
+  const orderBy = sort === 'oldest' || sort === 'asc'
+    ? [{ createdAt: 'asc' }, { id: 'asc' }]
+    : [{ createdAt: 'desc' }, { id: 'desc' }];
 
   const [items, total] = await Promise.all([
     prisma.order.findMany({
       where,
-      orderBy: { pickupDatetime: 'asc' },
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
+      include: ORDER_INCLUDE,
     }),
     prisma.order.count({ where }),
   ]);
@@ -115,8 +181,13 @@ const list = asyncHandler(async (req, res) => {
 });
 
 const create = asyncHandler(async (req, res) => {
-  const { totalAmount, discount, advancePaid, status, paymentStatus, paymentMethod, orderNumber: _ignored, ...rest } = req.body;
-  const remainingAmount = totalAmount - (discount || 0) - (advancePaid || 0);
+  const { totalAmount, discount, advancePaid, status, paymentStatus, paymentMethod, orderNumber: _ignored, items, ...rest } = req.body;
+
+  const summary = summarizeItems(items);
+  const finalTotalAmount = summary ? summary.totalAmount : totalAmount;
+  const finalDiscount = discount || 0;
+  const finalAdvancePaid = advancePaid || 0;
+  const remainingAmount = finalTotalAmount - finalDiscount - finalAdvancePaid;
   if (remainingAmount < 0) {
     throw new ApiError(422, 'Discount and advance paid cannot exceed the total amount');
   }
@@ -126,17 +197,22 @@ const create = asyncHandler(async (req, res) => {
 
   const payload = {
     ...rest,
-    totalAmount,
-    discount: discount || 0,
-    advancePaid: advancePaid || 0,
+    ...(summary
+      ? { productName: summary.productName, quantity: summary.quantity, weight: summary.weight, flavour: summary.flavour }
+      : {}),
+    totalAmount: finalTotalAmount,
+    discount: finalDiscount,
+    advancePaid: finalAdvancePaid,
     orderNumber: generatedOrderNumber,
     remainingAmount,
     status: toDbOrderStatus(status),
     paymentStatus: toDbPaymentStatus(paymentStatus),
+    ...(items && items.length > 0 ? { items: { create: itemsNestedWrite(items) } } : {}),
   };
 
   const order = await prisma.order.create({
     data: payload,
+    include: ORDER_INCLUDE,
   });
 
   await logAction({ adminId: req.admin.id, action: 'ORDER_CREATED', entityType: 'Order', entityId: order.id, ip: req.ip });
@@ -149,8 +225,10 @@ const update = asyncHandler(async (req, res) => {
   const existing = await prisma.order.findUnique({ where: { id: orderId } });
   if (!existing) throw new ApiError(404, 'Order not found');
 
-  const { status, paymentStatus, paymentMethod, orderNumber: _ignored, ...rest } = req.body;
-  const totalAmount = req.body.totalAmount ?? Number(existing.totalAmount);
+  const { status, paymentStatus, paymentMethod, orderNumber: _ignored, items, ...rest } = req.body;
+
+  const summary = items ? summarizeItems(items) : null;
+  const totalAmount = summary ? summary.totalAmount : (req.body.totalAmount ?? Number(existing.totalAmount));
   const discount = req.body.discount ?? Number(existing.discount);
   const advancePaid = req.body.advancePaid ?? Number(existing.advancePaid);
   const remainingAmount = totalAmount - discount - advancePaid;
@@ -160,14 +238,22 @@ const update = asyncHandler(async (req, res) => {
 
   const payload = {
     ...rest,
+    ...(summary
+      ? { productName: summary.productName, quantity: summary.quantity, weight: summary.weight, flavour: summary.flavour }
+      : {}),
+    totalAmount,
     remainingAmount,
     ...(status ? { status: toDbOrderStatus(status) } : {}),
     ...(paymentStatus ? { paymentStatus: toDbPaymentStatus(paymentStatus) } : {}),
+    // Full replace, not a diff/merge — simplest correct semantics for a
+    // repeatable item list edited as a whole in one form submission.
+    ...(items ? { items: { deleteMany: {}, create: itemsNestedWrite(items) } } : {}),
   };
 
   const order = await prisma.order.update({
     where: { id: orderId },
     data: payload,
+    include: ORDER_INCLUDE,
   });
 
   await logAction({ adminId: req.admin.id, action: 'ORDER_UPDATED', entityType: 'Order', entityId: order.id, ip: req.ip });
@@ -210,6 +296,7 @@ const updateStatus = asyncHandler(async (req, res) => {
   const order = await prisma.order.update({
     where: { id: Number(id) },
     data: { status: toDbOrderStatus(status) },
+    include: ORDER_INCLUDE,
   });
 
   await logAction({
@@ -234,6 +321,7 @@ const updatePaymentStatus = asyncHandler(async (req, res) => {
   const order = await prisma.order.update({
     where: { id: Number(id) },
     data: { paymentStatus: toDbPaymentStatus(paymentStatus) },
+    include: ORDER_INCLUDE,
   });
 
   await logAction({
@@ -261,7 +349,7 @@ const remove = asyncHandler(async (req, res) => {
 
 const generateInvoiceHandler = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const existing = await prisma.order.findUnique({ where: { id: Number(id) } });
+  const existing = await prisma.order.findUnique({ where: { id: Number(id) }, include: ORDER_INCLUDE });
   if (!existing) throw new ApiError(404, 'Order not found');
 
   const serial = serializeOrder(existing);
@@ -271,6 +359,7 @@ const generateInvoiceHandler = asyncHandler(async (req, res) => {
 
   const updated = await prisma.order.update({
     where: { id: Number(id) },
+    include: ORDER_INCLUDE,
     data: {
       invoicePath: fullUrl,
       invoiceGeneratedAt: new Date(),

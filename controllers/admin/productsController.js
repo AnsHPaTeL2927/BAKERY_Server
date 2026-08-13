@@ -17,9 +17,11 @@ const list = asyncHandler(async (req, res) => {
     ...(featured !== undefined ? { featured: featured === 'true' } : {}),
     ...(available !== undefined ? { available: available === 'true' } : {}),
   };
-  const orderBy = sort
-    ? [{ createdAt: sort === 'newest' ? 'desc' : 'asc' }, { id: 'asc' }]
-    : [{ sortOrder: 'asc' }, { id: 'asc' }];
+  const orderBy = sort === 'oldest'
+    ? [{ createdAt: 'asc' }, { id: 'asc' }]
+    : sort === 'sortOrder'
+    ? [{ sortOrder: 'asc' }, { id: 'asc' }]
+    : [{ createdAt: 'desc' }, { id: 'desc' }];
 
   const hasPriceFilter = minPrice !== undefined || maxPrice !== undefined;
 

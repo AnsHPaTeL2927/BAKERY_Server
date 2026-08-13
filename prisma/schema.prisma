@@ -62,15 +62,15 @@ enum PaymentMethod {
 }
 
 model Admin {
-  id             Int            @id @default(autoincrement())
+  id             Int                  @id @default(autoincrement())
   name           String
-  email          String         @unique
+  email          String               @unique
   passwordHash   String
-  failedAttempts Int            @default(0)
+  failedAttempts Int                  @default(0)
   lockedUntil    DateTime?
   lastLoginAt    DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
   otpCodes       OtpCode[]
   refreshTokens  RefreshToken[]
   auditLogs      AuditLog[]
@@ -108,30 +108,34 @@ model OtpCode {
 }
 
 model RefreshToken {
-  id         Int       @id @default(autoincrement())
-  adminId    Int
-  admin      Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  tokenHash  String
-  expiresAt  DateTime
-  revokedAt  DateTime?
-  userAgent  String?   @db.VarChar(512)
-  ip         String?   @db.VarChar(64)
-  createdAt  DateTime  @default(now())
+  id        Int       @id @default(autoincrement())
+  adminId   Int
+  admin     Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?   @db.VarChar(512)
+  ip        String?   @db.VarChar(64)
+  createdAt DateTime  @default(now())
 
   @@index([adminId])
   @@map("refresh_tokens")
 }
 
 model Category {
-  id        Int       @id @default(autoincrement())
-  name      String
-  slug      String    @unique
-  image     String?
-  status    Status    @default(LIVE)
-  sortOrder Int       @default(0)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  products  Product[]
+  id          Int       @id @default(autoincrement())
+  name        String
+  slug        String    @unique
+  // Optional short blurb shown under the category name on the public homepage
+  // ("Explore Categories" cards) and menu filters — purely presentational,
+  // safe to leave blank.
+  description String?   @db.VarChar(240)
+  image       String?
+  status      Status    @default(LIVE)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
 
   @@map("categories")
 }
@@ -288,6 +292,11 @@ model Order {
   orderNumber        String        @unique
   customerName       String
   phone              String
+  // Legacy single-line-item fields. Kept (not dropped) for backward
+  // compatibility with orders created before multi-item support — every
+  // write path now auto-derives these as a mirror/summary of `items`
+  // (see ordersController.js), so any code that still reads them directly
+  // (desktop table, older reports) keeps working unchanged.
   productName        String
   quantity           Int
   totalAmount        Decimal       @db.Decimal(10, 2)
@@ -307,10 +316,32 @@ model Order {
   invoiceGeneratedAt DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
+  items              OrderItem[]
 
   @@index([status])
   @@index([pickupDatetime])
   @@map("orders")
+}
+
+// One row per cake/product on an order — added so a single order can hold
+// multiple distinct products, each with its own weight/flavour/qty/price.
+model OrderItem {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productName String
+  weight      String?
+  flavour     String?
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  lineTotal   Decimal  @db.Decimal(10, 2)
+  note        String?  @db.Text
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([orderId])
+  @@map("order_items")
 }
 
 model AuditLog {

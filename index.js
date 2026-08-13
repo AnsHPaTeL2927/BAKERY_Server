@@ -6,12 +6,14 @@ const helmet = require('helmet');
 const hpp = require('hpp');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
+const cron = require('node-cron');
 
 const adminRoutes = require('./routes/admin');
 const publicRoutes = require('./routes/public.routes');
 const { publicApiLimiter } = require('./middleware/rateLimiters');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 const { absolutizeUploads } = require('./middleware/absolutizeUploads');
+const { expireStaleOffers } = require('./services/offerExpiryService');
 
 const app = express();
 
@@ -69,3 +71,14 @@ app.use(errorHandler);
 app.listen(env.PORT, () => {
   console.log(`Cakes by Tulsi API running on http://localhost:${env.PORT}`);
 });
+
+// Deactivate offers past their own `endDate` — public visibility is already
+// date-aware on every request regardless of this job (see getOffers), so
+// this only keeps the admin panel's "Active" toggle honest. Skipped in
+// tests to avoid side effects against a test database.
+if (env.NODE_ENV !== 'test') {
+  expireStaleOffers().catch((err) => console.error('[offer-expiry] boot-time run failed:', err));
+  cron.schedule('0 0 * * *', () => {
+    expireStaleOffers().catch((err) => console.error('[offer-expiry] scheduled run failed:', err));
+  });
+}

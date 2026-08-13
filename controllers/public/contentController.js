@@ -37,7 +37,7 @@ const getCategories = asyncHandler(async (req, res) => {
   const categories = await prisma.category.findMany({
     where: { status: 'LIVE' },
     orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-    select: { id: true, name: true, slug: true, image: true },
+    select: { id: true, name: true, slug: true, description: true, image: true },
   });
   res.json(categories);
 });
@@ -56,7 +56,22 @@ const getOffers = asyncHandler(async (req, res) => {
     where: { status: 'LIVE' },
     orderBy: [{ priority: 'asc' }, { id: 'asc' }],
   });
-  res.json(offers);
+
+  // The admin's `active` flag is a manual "is this the current promotion"
+  // toggle — it doesn't know about the clock, so an admin who forgets to
+  // flip it off after `endDate` would otherwise keep an expired offer live
+  // on the public site indefinitely. Compute the date-aware truth here so
+  // every public consumer (Home banner, Festival Specials) sees the same
+  // answer without duplicating this logic or needing a separate cron job.
+  const now = Date.now();
+  const withComputedState = offers.map((offer) => ({
+    ...offer,
+    isCurrentlyActive: offer.active && offer.startDate.getTime() <= now && now <= offer.endDate.getTime(),
+    isUpcoming: offer.startDate.getTime() > now,
+    isExpired: offer.endDate.getTime() < now,
+  }));
+
+  res.json(withComputedState);
 });
 
 const getSettings = asyncHandler(async (req, res) => {

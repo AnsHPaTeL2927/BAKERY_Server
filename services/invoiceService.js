@@ -118,12 +118,42 @@ async function generateInvoice(order, settings, publicUrl) {
   y += 30;
 
   doc.font('Helvetica').fontSize(10).fillColor(COLOR_DARK);
-  doc.text(order.productName, 60, y, { width: 190 });
-  doc.text(order.weight || '-', 260, y);
-  doc.text(order.flavour || '-', 340, y);
-  doc.text(String(order.quantity), 430, y);
-  doc.text(money(order.totalAmount), 470, y, { width: 65, align: 'right' });
-  y += 28;
+  // Multi-item orders: one row per product from `order.items`. Older orders
+  // (or any caller that never sent items) fall back to the single legacy
+  // productName/weight/flavour/quantity/totalAmount fields as one row, so
+  // this never breaks for pre-existing invoices.
+  const lineItems =
+    Array.isArray(order.items) && order.items.length > 0
+      ? order.items
+      : [
+          {
+            productName: order.productName,
+            weight: order.weight,
+            flavour: order.flavour,
+            quantity: order.quantity,
+            lineTotal: order.totalAmount,
+            note: null,
+          },
+        ];
+
+  lineItems.forEach((item) => {
+    if (y > 700) {
+      doc.addPage();
+      y = 50;
+    }
+    doc.font('Helvetica').fontSize(10).fillColor(COLOR_DARK);
+    doc.text(item.productName, 60, y, { width: 190 });
+    doc.text(item.weight || '-', 260, y);
+    doc.text(item.flavour || '-', 340, y);
+    doc.text(String(item.quantity), 430, y);
+    doc.text(money(item.lineTotal), 470, y, { width: 65, align: 'right' });
+    y += 18;
+    if (item.note) {
+      doc.fillColor(COLOR_MUTED).font('Helvetica-Oblique').fontSize(8).text(`Note: ${item.note}`, 60, y, { width: 480 });
+      y += 12;
+    }
+  });
+  y += 10;
 
   if (order.notes) {
     doc.fillColor(COLOR_MUTED).fontSize(9).text(`Message: ${order.notes}`, 60, y, { width: 480 });
