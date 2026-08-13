@@ -7,6 +7,7 @@ const {
   createTestimonialSchema,
   updateTestimonialSchema,
   listTestimonialsSchema,
+  approvalUpdateSchema,
 } = require('../../validators/testimonialValidators');
 
 const router = express.Router();
@@ -15,6 +16,7 @@ router.get('/', validate(listTestimonialsSchema), controller.list);
 router.post('/', upload.single('photo'), validate(createTestimonialSchema), controller.create);
 router.put('/:id', upload.single('photo'), validate(updateTestimonialSchema), controller.update);
 router.patch('/:id/status', validate(statusUpdateSchema), controller.setStatus);
+router.patch('/:id/approval', validate(approvalUpdateSchema), controller.setApproval);
 router.delete('/:id', validate(idOnlySchema), controller.remove);
 
 module.exports = router;

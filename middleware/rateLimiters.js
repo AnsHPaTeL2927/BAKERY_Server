@@ -32,6 +32,17 @@ const contactLimiter = rateLimit({
   message: { message: 'Too many messages sent. Please try again later.' },
 });
 
+// Reviews are public, unauthenticated and land in a moderation queue an admin
+// has to clear by hand — a tighter budget than /contact so a single abusive
+// visitor can't flood that queue.
+const reviewLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many reviews submitted. Please try again later.' },
+});
+
 const analyticsLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 120,
@@ -48,4 +59,4 @@ const publicApiLimiter = rateLimit({
   message: { message: 'Too many requests. Please slow down.' },
 });
 
-module.exports = { loginLimiter, otpLimiter, passwordResetLimiter, contactLimiter, analyticsLimiter, publicApiLimiter };
+module.exports = { loginLimiter, otpLimiter, passwordResetLimiter, contactLimiter, reviewLimiter, analyticsLimiter, publicApiLimiter };

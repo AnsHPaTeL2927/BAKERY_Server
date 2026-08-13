@@ -42,7 +42,7 @@ const orderItemSchema = z.object({
 // product" requirement is enforced separately, only for create.
 const orderBodySchema = z.object({
   customerName: sanitizedString({ min: 2, max: 150 }),
-  phone: z.string().trim().min(7, 'Enter a valid phone number').max(20),
+  phone: z.string().trim().regex(/^\d{10}$/, 'Phone number must be exactly 10 digits'),
   // `items` is how every current write path sends products now (repeatable,
   // multi-product orders). `productName`/`quantity`/`totalAmount` stay
   // accepted directly too — optional here, not required — purely so any
