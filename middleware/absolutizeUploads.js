@@ -22,13 +22,20 @@ function rewrite(value, baseUrl) {
   return value;
 }
 
-// Derives the base URL from the incoming request instead of a fixed env var,
-// so the same deployment serves correct image URLs whether it's reached via
-// localhost, a rotating Cloudflare Tunnel hostname, or a production domain
-// behind a reverse proxy. `trust proxy` is enabled in index.js, so req.protocol
-// already reflects X-Forwarded-Proto; the host is read explicitly because
-// req.get('host') returns the raw Host header, not a forwarded one.
+// Derives the base URL for absolute asset links.
+//
+// X-Forwarded-Host / X-Forwarded-Proto are client-supplied strings — any caller
+// can set them to whatever they like. In production that is a host-header
+// injection primitive (poisoned links pointing at an attacker's domain, served
+// back under this site's name), so there the base URL comes only from
+// configuration. The request-derived form is kept for development, where the
+// same server is reached over localhost or a rotating Cloudflare Tunnel
+// hostname and there is no fixed origin to configure.
 function resolveBaseUrl(req) {
+  if (env.NODE_ENV === 'production') {
+    return env.PUBLIC_ASSET_URL;
+  }
+
   const host = req.headers['x-forwarded-host'] || req.get('host');
   if (!host) return env.PUBLIC_ASSET_URL;
 

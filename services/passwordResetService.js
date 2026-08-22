@@ -11,7 +11,23 @@ function generateCode() {
   return String(crypto.randomInt(100000, 1000000));
 }
 
+// Same rule as login OTPs (see otpService.issueOtp): the failed-attempt count
+// carries over to the replacement code while the old one is still inside its
+// TTL, so requesting a new code cannot be used to reset the 5-guess budget.
+// Silently declines to send once that budget is spent — the caller's response
+// is identical either way, so this leaks nothing and cannot be used to flood
+// the admin's inbox.
 async function issuePasswordReset(admin) {
+  const outstanding = await prisma.passwordResetToken.findFirst({
+    where: { adminId: admin.id, consumedAt: null },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const stillValid = outstanding && outstanding.expiresAt > new Date();
+  const carriedAttempts = stillValid ? outstanding.attempts : 0;
+
+  if (carriedAttempts >= MAX_RESET_ATTEMPTS) return;
+
   // Only the newest outstanding reset code is ever valid, same rule as login OTPs.
   await prisma.passwordResetToken.deleteMany({ where: { adminId: admin.id, consumedAt: null } });
 
@@ -19,7 +35,7 @@ async function issuePasswordReset(admin) {
   const codeHash = await bcrypt.hash(code, 10);
   const expiresAt = addDuration(new Date(), `${RESET_TTL_MINUTES}m`);
 
-  await prisma.passwordResetToken.create({ data: { adminId: admin.id, codeHash, expiresAt } });
+  await prisma.passwordResetToken.create({ data: { adminId: admin.id, codeHash, expiresAt, attempts: carriedAttempts } });
 
   await sendMail({
     to: admin.email,
@@ -46,7 +62,7 @@ async function verifyResetCode(admin, submittedCode) {
     return { ok: false, reason: 'Reset code has expired. Please request a new one.' };
   }
   if (row.attempts >= MAX_RESET_ATTEMPTS) {
-    return { ok: false, reason: 'Too many incorrect attempts. Please request a new code.' };
+    return { ok: false, reason: 'Too many incorrect attempts. Please wait for the code to expire, then request a new one.' };
   }
 
   const matches = await bcrypt.compare(submittedCode, row.codeHash);

@@ -1,8 +1,8 @@
 const prisma = require('../../config/prisma');
 const { asyncHandler, ApiError } = require('../../middleware/errorHandler');
 const { logAction } = require('../../services/auditService');
-const { generateInvoice, toInvoiceNumber } = require('../../services/invoiceService');
-const { resolveBaseUrl } = require('../../middleware/absolutizeUploads');
+const fs = require('fs');
+const { generateInvoice, toInvoiceNumber, invoiceFilePath } = require('../../services/invoiceService');
 
 // Maps UI/API payment status labels -> DB enum values
 // PaymentStatus enum in schema: UNPAID | PARTIALLY_PAID | PAID | REFUNDED | PENDING | PARTIAL
@@ -347,26 +347,61 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Order deleted successfully' });
 });
 
+// The stored value is a relative, host-independent API path — never an
+// absolute URL built from request headers (an attacker-supplied
+// X-Forwarded-Host would otherwise be persisted and later handed to staff as a
+// clickable link). The frontend resolves it against its own API base.
+function invoiceApiPath(orderId) {
+  return `/api/admin/orders/${orderId}/invoice`;
+}
+
+async function buildInvoice(order) {
+  const settings = await prisma.websiteSettings.findUnique({ where: { id: 1 } });
+  return generateInvoice(serializeOrder(order), settings);
+}
+
 const generateInvoiceHandler = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const existing = await prisma.order.findUnique({ where: { id: Number(id) }, include: ORDER_INCLUDE });
   if (!existing) throw new ApiError(404, 'Order not found');
 
-  const serial = serializeOrder(existing);
-  const pdfPath = await generateInvoice(serial);
-  const relativePath = `/uploads/invoices/${pdfPath.split('/invoices/')[1] || pdfPath.split('\\invoices\\')[1]}`;
-  const fullUrl = resolveBaseUrl(req, relativePath);
+  await buildInvoice(existing);
 
   const updated = await prisma.order.update({
     where: { id: Number(id) },
     include: ORDER_INCLUDE,
     data: {
-      invoicePath: fullUrl,
+      invoicePath: invoiceApiPath(existing.id),
       invoiceGeneratedAt: new Date(),
     },
   });
 
-  res.json({ order: serializeOrder(updated), invoicePath: fullUrl });
+  res.json({ order: serializeOrder(updated), invoicePath: updated.invoicePath });
+});
+
+// Invoices are PII, so the PDF is streamed from private storage behind
+// requireAdminAuth rather than being served as a static file. Regenerates on
+// the fly when the file is missing (older order, cleared disk on a
+// redeploy — free hosts do not keep an ephemeral filesystem between deploys).
+const downloadInvoice = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const order = await prisma.order.findUnique({ where: { id: Number(id) }, include: ORDER_INCLUDE });
+  if (!order) throw new ApiError(404, 'Order not found');
+
+  let filePath = invoiceFilePath(order.orderNumber);
+  if (!fs.existsSync(filePath)) {
+    filePath = await buildInvoice(order);
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { invoicePath: invoiceApiPath(order.id), invoiceGeneratedAt: new Date() },
+    });
+  }
+
+  const filename = `${toInvoiceNumber(order.orderNumber)}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  fs.createReadStream(filePath).pipe(res);
 });
 
 const getTimeline = asyncHandler(async (req, res) => {
@@ -398,5 +433,6 @@ module.exports = {
   remove,
   generateInvoice: generateInvoiceHandler,
   generateInvoicePdf: generateInvoiceHandler,
+  downloadInvoice,
   getTimeline,
 };

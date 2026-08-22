@@ -11,7 +11,31 @@ function generateOtp() {
   return String(crypto.randomInt(100000, 1000000));
 }
 
+// Issuing a new code must NOT hand the caller a fresh set of guesses: otherwise
+// the 5-attempt cap below is defeated by simply calling /auth/resend-otp after
+// every fifth wrong guess. The failed-attempt count is therefore carried over
+// from any code that is still within its TTL, so the budget is 5 attempts per
+// OTP_TTL_MINUTES window no matter how many codes get issued inside it. Once
+// the window lapses the count naturally resets.
+//
+// Returns { blocked: true, retryAfterMinutes } instead of sending a new code
+// when that budget is already spent — which also stops the endpoint from being
+// used to flood the admin's inbox.
 async function issueOtp(admin) {
+  const outstanding = await prisma.otpCode.findFirst({
+    where: { adminId: admin.id, consumedAt: null },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const now = new Date();
+  const stillValid = outstanding && outstanding.expiresAt > now;
+  const carriedAttempts = stillValid ? outstanding.attempts : 0;
+
+  if (carriedAttempts >= MAX_OTP_ATTEMPTS) {
+    const retryAfterMinutes = Math.max(1, Math.ceil((outstanding.expiresAt.getTime() - now.getTime()) / 60000));
+    return { blocked: true, retryAfterMinutes };
+  }
+
   // Invalidate any OTP still outstanding for this admin — only the newest one is ever valid.
   await prisma.otpCode.deleteMany({ where: { adminId: admin.id, consumedAt: null } });
 
@@ -20,7 +44,7 @@ async function issueOtp(admin) {
   const expiresAt = addDuration(new Date(), `${env.OTP_TTL_MINUTES}m`);
 
   await prisma.otpCode.create({
-    data: { adminId: admin.id, codeHash, expiresAt },
+    data: { adminId: admin.id, codeHash, expiresAt, attempts: carriedAttempts },
   });
 
   await sendMail({
@@ -34,7 +58,7 @@ async function issueOtp(admin) {
     `,
   });
 
-  return otp;
+  return { blocked: false, otp };
 }
 
 async function verifyOtp(adminId, submittedCode) {
@@ -52,7 +76,7 @@ async function verifyOtp(adminId, submittedCode) {
   }
 
   if (otpRow.attempts >= MAX_OTP_ATTEMPTS) {
-    return { ok: false, reason: 'Too many incorrect attempts. Please log in again.' };
+    return { ok: false, reason: 'Too many incorrect attempts. Please wait for the code to expire, then log in again.' };
   }
 
   const matches = await bcrypt.compare(submittedCode, otpRow.codeHash);

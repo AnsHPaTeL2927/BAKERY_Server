@@ -1,5 +1,7 @@
 const express = require('express');
 const { requireAdminAuth } = require('../../middleware/auth');
+const { requireCsrfToken } = require('../../middleware/csrf');
+const { adminApiLimiter } = require('../../middleware/rateLimiters');
 
 const authRoutes = require('./auth.routes');
 const dashboardRoutes = require('./dashboard.routes');
@@ -14,6 +16,16 @@ const messagesRoutes = require('./messages.routes');
 const ordersRoutes = require('./orders.routes');
 
 const router = express.Router();
+
+// Applied to the entire admin tree — /auth included, since /auth/refresh is
+// reachable without a session.
+router.use(adminApiLimiter);
+
+// Cookie-based sessions plus SameSite=None means the browser offers no CSRF
+// protection of its own; every state-changing admin request must carry a
+// matching double-submit token. Mounted above requireAdminAuth so it also
+// covers the authenticated /auth/logout.
+router.use(requireCsrfToken);
 
 // Auth routes handle their own per-endpoint auth requirements (login/verify/resend/refresh
 // are public but rate-limited; /me and /logout require a valid session individually).

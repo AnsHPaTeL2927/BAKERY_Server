@@ -47,6 +47,16 @@ if (!parsed.success) {
 }
 
 const data = parsed.data;
+
+// In production this is the single source of truth for absolute asset URLs
+// (middleware/absolutizeUploads.js no longer trusts the request's Host /
+// X-Forwarded-Host headers there), so a missing value would silently emit
+// localhost links for every image. Fail loudly at boot instead.
+if (data.NODE_ENV === 'production' && !data.PUBLIC_ASSET_URL) {
+  console.error('PUBLIC_ASSET_URL must be set in production (public origin of this API, e.g. https://api.example.com)');
+  process.exit(1);
+}
+
 if (!data.PUBLIC_ASSET_URL) {
   data.PUBLIC_ASSET_URL = `http://localhost:${data.PORT}`;
 }

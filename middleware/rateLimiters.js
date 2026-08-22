@@ -51,6 +51,27 @@ const analyticsLimiter = rateLimit({
   message: { message: 'Too many requests.' },
 });
 
+// The whole /api/admin tree, including the unauthenticated /auth/refresh.
+// Generous enough for real dashboard use (which fans out into several parallel
+// calls per page) while still bounding automated abuse.
+const adminApiLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests. Please slow down.' },
+});
+
+// Refresh is unauthenticated (it only presents a refresh-token cookie), so it
+// gets its own tighter budget on top of the tree-wide one.
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many session refresh attempts. Please log in again.' },
+});
+
 const publicApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 1000,
@@ -59,4 +80,14 @@ const publicApiLimiter = rateLimit({
   message: { message: 'Too many requests. Please slow down.' },
 });
 
-module.exports = { loginLimiter, otpLimiter, passwordResetLimiter, contactLimiter, reviewLimiter, analyticsLimiter, publicApiLimiter };
+module.exports = {
+  loginLimiter,
+  otpLimiter,
+  passwordResetLimiter,
+  contactLimiter,
+  reviewLimiter,
+  analyticsLimiter,
+  adminApiLimiter,
+  refreshLimiter,
+  publicApiLimiter,
+};

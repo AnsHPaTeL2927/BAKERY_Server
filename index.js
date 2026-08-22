@@ -63,6 +63,14 @@ if (env.NODE_ENV !== 'test') {
   );
 }
 
+// Invoices used to live under uploads/ and were therefore world-readable at a
+// guessable URL (/uploads/invoices/INV-0001.pdf). They now live in
+// storage/invoices/ behind GET /api/admin/orders/:id/invoice; this guard makes
+// sure a leftover file or a future mistake can never re-expose them here.
+app.use('/uploads/invoices', (_req, res) => {
+  res.status(404).json({ message: 'Not found' });
+});
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
 app.use(absolutizeUploads);
 

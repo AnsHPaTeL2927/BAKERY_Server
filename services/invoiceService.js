@@ -4,7 +4,15 @@ const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
 
 const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads');
-const INVOICES_DIR = path.join(UPLOADS_ROOT, 'invoices');
+// Invoices carry customer PII (name, phone, delivery address, amounts), so they
+// deliberately live OUTSIDE uploads/ — that directory is served statically and
+// unauthenticated. These are only ever readable through the auth-gated
+// GET /api/admin/orders/:id/invoice endpoint.
+const INVOICES_DIR = path.join(__dirname, '..', 'storage', 'invoices');
+
+function invoiceFilePath(orderNumber) {
+  return path.join(INVOICES_DIR, `${toInvoiceNumber(orderNumber)}.pdf`);
+}
 
 const COLOR_PRIMARY = '#C6567A';
 const COLOR_DARK = '#4A2A20';
@@ -31,8 +39,9 @@ function formatDateTime(date) {
   return new Date(date).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-// Writes server/uploads/invoices/<INV-xxxx>.pdf, mirroring the relative-URL
-// convention imageService.js already uses for uploaded images.
+// Writes server/storage/invoices/<INV-xxxx>.pdf and returns the absolute path
+// on disk. Nothing about this path is ever handed to a client — callers expose
+// the invoice through the authenticated download route instead.
 //
 // `publicUrl`, if provided, is the invoice's own eventual absolute URL
 // (resolved by the caller via absolutizeUploads' resolveBaseUrl, since this
@@ -215,7 +224,7 @@ async function generateInvoice(order, settings, publicUrl) {
     stream.on('error', reject);
   });
 
-  return `/uploads/invoices/${filename}`;
+  return destPath;
 }
 
-module.exports = { generateInvoice, toInvoiceNumber };
+module.exports = { generateInvoice, toInvoiceNumber, invoiceFilePath, INVOICES_DIR };
