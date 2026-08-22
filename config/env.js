@@ -1,12 +1,55 @@
 require('dotenv').config();
 const { z } = require('zod');
 
+function splitOrigins(value) {
+  return String(value)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 const envSchema = z.object({
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // Vercel's Neon integration injects several connection strings under its
+  // own names rather than a plain DATABASE_URL. schema.prisma reads
+  // POSTGRES_PRISMA_URL (pooled, for the app) and DATABASE_URL_UNPOOLED
+  // (direct, for migrations) itself — Prisma resolves `env()` independently
+  // of this file — but both are validated here too so a missing one fails
+  // loudly at boot with a clear message instead of a cryptic Prisma error on
+  // the first query.
+  POSTGRES_PRISMA_URL: z.string().min(1, 'POSTGRES_PRISMA_URL is required (the pooled Neon connection string)'),
+  DATABASE_URL_UNPOOLED: z.string().min(1, 'DATABASE_URL_UNPOOLED is required (the direct Neon connection string, used for migrations)'),
   PORT: z.coerce.number().default(5000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  FRONTEND_URL: z.string().url().default('http://localhost:5173'),
+  // Comma-separated list of allowed browser origins. A production site is
+  // reachable at both the apex and the www host (and Vercel adds a
+  // *.vercel.app preview origin), so this accepts several rather than one.
+  FRONTEND_URL: z
+    .string()
+    .default('http://localhost:5173')
+    .refine(
+      (value) => splitOrigins(value).every(isHttpUrl),
+      'FRONTEND_URL must be a comma-separated list of absolute http(s) URLs',
+    ),
   PUBLIC_ASSET_URL: z.string().url().optional(),
+
+  // Vercel Blob replaces the local uploads/ directory in production (a
+  // serverless filesystem is read-only and wiped between invocations).
+  // Injected automatically by Vercel once a Blob store is linked to the
+  // project; left unset locally, where images still go to uploads/.
+  BLOB_READ_WRITE_TOKEN: z.string().optional(),
+
+  // Shared secret for the Vercel Cron endpoint that replaces node-cron.
+  // Vercel sends it as `Authorization: Bearer <CRON_SECRET>`.
+  CRON_SECRET: z.string().optional(),
 
   // Self-ping keep-alive (see services/keepAliveService.js). Leave
   // KEEP_ALIVE_URL unset to disable — it should point at this deployment's own
@@ -60,5 +103,18 @@ if (data.NODE_ENV === 'production' && !data.PUBLIC_ASSET_URL) {
 if (!data.PUBLIC_ASSET_URL) {
   data.PUBLIC_ASSET_URL = `http://localhost:${data.PORT}`;
 }
+
+// Images move to Vercel Blob in production; without a token every upload would
+// fail at the point an admin tries to save a product, which is far too late to
+// find out. Fail at boot instead, matching PUBLIC_ASSET_URL's behaviour above.
+if (data.NODE_ENV === 'production' && !data.BLOB_READ_WRITE_TOKEN) {
+  console.error(
+    'BLOB_READ_WRITE_TOKEN must be set in production (link a Vercel Blob store to the project to have it injected automatically)',
+  );
+  process.exit(1);
+}
+
+// Parsed once here so request handling never re-splits the string.
+data.FRONTEND_URLS = splitOrigins(data.FRONTEND_URL);
 
 module.exports = data;

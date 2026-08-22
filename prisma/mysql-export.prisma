@@ -1,23 +1,22 @@
-generator client {
+// Read-only companion schema used ONLY by scripts/exportData.js to dump the
+// old MySQL database during the move to Postgres.
+//
+// The main schema.prisma now targets postgresql, and a Prisma client can only
+// speak to the provider it was generated for — so exporting from the old
+// database needs its own client. This one is generated to a separate output
+// directory so it never collides with the real @prisma/client.
+//
+// It is deliberately a plain mirror of the models as they existed in MySQL:
+// no migrations are ever run from this file. Delete it once the move is done.
+
+generator mysqlClient {
   provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/mysql-client"
 }
 
-// Two URLs, because a pooled and a direct connection are needed for different
-// things and mixing them up fails in ways that are hard to diagnose.
-//
-// `url` is Neon's pooled endpoint (PgBouncer in transaction mode). It carries
-// ?pgbouncer=true, which stops Prisma using prepared statements — without it,
-// concurrent serverless invocations eventually throw
-// `prepared statement "s0" already exists`. Vercel's Neon integration injects
-// POSTGRES_PRISMA_URL with that flag already set.
-//
-// `directUrl` bypasses the pooler and is used only by `prisma migrate` /
-// `db push`. Migrations take advisory locks that transaction pooling silently
-// drops, which can leave a migration half-applied.
 datasource db {
-  provider  = "postgresql"
-  url       = env("POSTGRES_PRISMA_URL")
-  directUrl = env("DATABASE_URL_UNPOOLED")
+  provider = "mysql"
+  url      = env("MYSQL_DATABASE_URL")
 }
 
 enum Status {
@@ -139,9 +138,6 @@ model Category {
   id          Int       @id @default(autoincrement())
   name        String
   slug        String    @unique
-  // Optional short blurb shown under the category name on the public homepage
-  // ("Explore Categories" cards) and menu filters — purely presentational,
-  // safe to leave blank.
   description String?   @db.VarChar(240)
   image       String?
   status      Status    @default(LIVE)
@@ -305,11 +301,6 @@ model Order {
   orderNumber        String        @unique
   customerName       String
   phone              String
-  // Legacy single-line-item fields. Kept (not dropped) for backward
-  // compatibility with orders created before multi-item support — every
-  // write path now auto-derives these as a mirror/summary of `items`
-  // (see ordersController.js), so any code that still reads them directly
-  // (desktop table, older reports) keeps working unchanged.
   productName        String
   quantity           Int
   totalAmount        Decimal       @db.Decimal(10, 2)
@@ -336,8 +327,6 @@ model Order {
   @@map("orders")
 }
 
-// One row per cake/product on an order — added so a single order can hold
-// multiple distinct products, each with its own weight/flavour/qty/price.
 model OrderItem {
   id          Int      @id @default(autoincrement())
   orderId     Int

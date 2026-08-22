@@ -4,15 +4,17 @@ const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
 
 const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads');
-// Invoices carry customer PII (name, phone, delivery address, amounts), so they
-// deliberately live OUTSIDE uploads/ — that directory is served statically and
-// unauthenticated. These are only ever readable through the auth-gated
-// GET /api/admin/orders/:id/invoice endpoint.
-const INVOICES_DIR = path.join(__dirname, '..', 'storage', 'invoices');
 
-function invoiceFilePath(orderNumber) {
-  return path.join(INVOICES_DIR, `${toInvoiceNumber(orderNumber)}.pdf`);
-}
+// Invoices carry customer PII (name, phone, delivery address, amounts), so they
+// are never persisted to shared storage at all. They are rendered to a Buffer
+// on demand and streamed straight out of the auth-gated
+// GET /api/admin/orders/:id/invoice endpoint.
+//
+// This replaced writing to storage/invoices/: a serverless filesystem cannot
+// hold them between requests, and the obvious alternative — Vercel Blob — is
+// public-only on the Hobby plan, which would put customer addresses behind
+// nothing but an unguessable URL. Regenerating is cheap (a few hundred ms) and
+// keeps the PDF reachable only through an authenticated request.
 
 const COLOR_PRIMARY = '#C6567A';
 const COLOR_DARK = '#4A2A20';
@@ -27,6 +29,35 @@ function toInvoiceNumber(orderNumber) {
   return orderNumber.replace(/^ORD-/, 'INV-');
 }
 
+// The logo is a Vercel Blob URL in production and a local "/uploads/..." path
+// in development, and PDFKit accepts neither a URL nor a missing file — so it
+// is resolved to a Buffer here. Entirely optional: any failure just means the
+// invoice renders without a logo, never that it fails to generate.
+async function loadLogo(logo) {
+  if (!logo) return null;
+
+  if (/^https?:\/\//i.test(logo)) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(logo, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!res.ok) return null;
+      return Buffer.from(await res.arrayBuffer());
+    } catch {
+      return null;
+    }
+  }
+
+  if (!logo.startsWith('/uploads/')) return null;
+  const logoPath = path.join(UPLOADS_ROOT, logo.replace('/uploads/', ''));
+  try {
+    return fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
+  } catch {
+    return null;
+  }
+}
+
 function money(value) {
   return `Rs. ${Number(value || 0).toFixed(2)}`;
 }
@@ -39,9 +70,8 @@ function formatDateTime(date) {
   return new Date(date).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-// Writes server/storage/invoices/<INV-xxxx>.pdf and returns the absolute path
-// on disk. Nothing about this path is ever handed to a client — callers expose
-// the invoice through the authenticated download route instead.
+// Renders the invoice and returns it as a PDF Buffer. Nothing is written to
+// disk — callers stream this straight out of the authenticated download route.
 //
 // `publicUrl`, if provided, is the invoice's own eventual absolute URL
 // (resolved by the caller via absolutizeUploads' resolveBaseUrl, since this
@@ -49,26 +79,26 @@ function formatDateTime(date) {
 // invoice can be scanned straight to a phone. Safe to omit; the QR is
 // simply skipped if no URL is known yet.
 async function generateInvoice(order, settings, publicUrl) {
-  fs.mkdirSync(INVOICES_DIR, { recursive: true });
   const invoiceNumber = toInvoiceNumber(order.orderNumber);
-  const filename = `${invoiceNumber}.pdf`;
-  const destPath = path.join(INVOICES_DIR, filename);
 
   const doc = new PDFDocument({ size: 'A4', margin: 50 });
-  const stream = fs.createWriteStream(destPath);
-  doc.pipe(stream);
+  // Collected rather than piped to a file — see the note above INVOICES_DIR.
+  const chunks = [];
+  doc.on('data', (chunk) => chunks.push(chunk));
+  const done = new Promise((resolve, reject) => {
+    doc.on('end', resolve);
+    doc.on('error', reject);
+  });
 
   const top = 50;
   let logoDrawn = false;
-  if (settings?.logo && settings.logo.startsWith('/uploads/')) {
-    const logoPath = path.join(UPLOADS_ROOT, settings.logo.replace('/uploads/', ''));
-    if (fs.existsSync(logoPath)) {
-      try {
-        doc.image(logoPath, 50, top, { fit: [60, 60] });
-        logoDrawn = true;
-      } catch {
-        logoDrawn = false;
-      }
+  const logoImage = await loadLogo(settings?.logo);
+  if (logoImage) {
+    try {
+      doc.image(logoImage, 50, top, { fit: [60, 60] });
+      logoDrawn = true;
+    } catch {
+      logoDrawn = false;
     }
   }
 
@@ -218,13 +248,9 @@ async function generateInvoice(order, settings, publicUrl) {
     .text('Thank you for choosing us for your celebration!', 50, y, { width: 495, align: 'center' });
 
   doc.end();
+  await done;
 
-  await new Promise((resolve, reject) => {
-    stream.on('finish', resolve);
-    stream.on('error', reject);
-  });
-
-  return destPath;
+  return Buffer.concat(chunks);
 }
 
-module.exports = { generateInvoice, toInvoiceNumber, invoiceFilePath, INVOICES_DIR };
+module.exports = { generateInvoice, toInvoiceNumber };

@@ -6,16 +6,14 @@ const helmet = require('helmet');
 const hpp = require('hpp');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
-const cron = require('node-cron');
 
 const adminRoutes = require('./routes/admin');
 const publicRoutes = require('./routes/public.routes');
 const healthRoutes = require('./routes/health.routes');
+const cronRoutes = require('./routes/cron.routes');
 const { publicApiLimiter } = require('./middleware/rateLimiters');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 const { absolutizeUploads } = require('./middleware/absolutizeUploads');
-const { expireStaleOffers } = require('./services/offerExpiryService');
-const { startKeepAlive } = require('./services/keepAliveService');
 
 const app = express();
 
@@ -27,7 +25,7 @@ app.set('trust proxy', 1);
 // load against /uploads.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 const allowedOrigins = [
-  env.FRONTEND_URL,
+  ...env.FRONTEND_URLS,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'https://localhost:5173',
@@ -42,7 +40,13 @@ app.use(
         return;
       }
 
-      const isAllowedOrigin = allowedOrigins.includes(origin) || /\.trycloudflare\.com$/i.test(origin);
+      // *.vercel.app covers the preview deployment each push generates, whose
+      // hostname is not known ahead of time and so can never be listed in
+      // FRONTEND_URL.
+      const isAllowedOrigin =
+        allowedOrigins.includes(origin) ||
+        /\.trycloudflare\.com$/i.test(origin) ||
+        /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
       callback(null, isAllowedOrigin);
     },
     credentials: true,
@@ -64,14 +68,20 @@ if (env.NODE_ENV !== 'test') {
 }
 
 // Invoices used to live under uploads/ and were therefore world-readable at a
-// guessable URL (/uploads/invoices/INV-0001.pdf). They now live in
-// storage/invoices/ behind GET /api/admin/orders/:id/invoice; this guard makes
-// sure a leftover file or a future mistake can never re-expose them here.
+// guessable URL (/uploads/invoices/INV-0001.pdf). They are no longer written to
+// disk at all — they are rendered on demand behind
+// GET /api/admin/orders/:id/invoice — but this guard stays so a leftover file
+// or a future mistake can never re-expose them here.
 app.use('/uploads/invoices', (_req, res) => {
   res.status(404).json({ message: 'Not found' });
 });
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
+// Local development only. In production images live in Vercel Blob and are
+// referenced by their own absolute URLs, and the serverless filesystem holds
+// no uploads/ directory to serve from in any case.
+if (env.NODE_ENV !== 'production') {
+  app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
+}
 app.use(absolutizeUploads);
 
 // Mounted at both paths so a pinger can target either the bare host or the
@@ -80,25 +90,19 @@ app.use(absolutizeUploads);
 app.use(healthRoutes);
 app.use('/api', healthRoutes);
 
+// Offer expiry used to run in-process via node-cron. A serverless deployment
+// has no long-lived process to hold a schedule, so the job is exposed as an
+// authenticated endpoint that Vercel Cron calls instead (see vercel.json).
+// server.js still drives it with node-cron when running as a normal process.
+app.use('/api/cron', cronRoutes);
+
 app.use('/api/admin', adminRoutes);
 app.use('/api', publicApiLimiter, publicRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-app.listen(env.PORT, () => {
-  console.log(`Cakes by Tulsi API running on http://localhost:${env.PORT}`);
-});
-
-// Deactivate offers past their own `endDate` — public visibility is already
-// date-aware on every request regardless of this job (see getOffers), so
-// this only keeps the admin panel's "Active" toggle honest. Skipped in
-// tests to avoid side effects against a test database.
-if (env.NODE_ENV !== 'test') {
-  expireStaleOffers().catch((err) => console.error('[offer-expiry] boot-time run failed:', err));
-  cron.schedule('0 0 * * *', () => {
-    expireStaleOffers().catch((err) => console.error('[offer-expiry] scheduled run failed:', err));
-  });
-
-  startKeepAlive();
-}
+// Exported rather than listened on: api/index.js hands this to Vercel as a
+// serverless handler, and server.js starts a real listener for local
+// development and any traditional (Render/Railway) host.
+module.exports = app;

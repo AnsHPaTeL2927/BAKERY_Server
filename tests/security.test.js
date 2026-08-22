@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
 
-process.env.DATABASE_URL = process.env.DATABASE_URL || 'mysql://root:@localhost:3306/test';
+process.env.POSTGRES_PRISMA_URL = process.env.POSTGRES_PRISMA_URL || 'postgresql://user:pass@localhost:5432/test';
+process.env.DATABASE_URL_UNPOOLED = process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_PRISMA_URL;
 process.env.JWT_ACCESS_SECRET = 'a'.repeat(48);
 process.env.JWT_REFRESH_SECRET = 'b'.repeat(48);
 process.env.OTP_SESSION_SECRET = 'c'.repeat(48);

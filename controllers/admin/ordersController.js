@@ -1,8 +1,7 @@
 const prisma = require('../../config/prisma');
 const { asyncHandler, ApiError } = require('../../middleware/errorHandler');
 const { logAction } = require('../../services/auditService');
-const fs = require('fs');
-const { generateInvoice, toInvoiceNumber, invoiceFilePath } = require('../../services/invoiceService');
+const { generateInvoice, toInvoiceNumber } = require('../../services/invoiceService');
 
 // Maps UI/API payment status labels -> DB enum values
 // PaymentStatus enum in schema: UNPAID | PARTIALLY_PAID | PAID | REFUNDED | PENDING | PARTIAL
@@ -365,8 +364,11 @@ const generateInvoiceHandler = asyncHandler(async (req, res) => {
   const existing = await prisma.order.findUnique({ where: { id: Number(id) }, include: ORDER_INCLUDE });
   if (!existing) throw new ApiError(404, 'Order not found');
 
-  await buildInvoice(existing);
-
+  // No longer renders the PDF here. Nothing would be kept — downloadInvoice
+  // builds it fresh on every request — so rendering it now would just spend a
+  // few hundred milliseconds on the most-used admin action ("Send WhatsApp
+  // Invoice") and throw the result away. This marks the order as invoiced;
+  // the PDF itself is produced when someone actually opens it.
   const updated = await prisma.order.update({
     where: { id: Number(id) },
     include: ORDER_INCLUDE,
@@ -379,18 +381,21 @@ const generateInvoiceHandler = asyncHandler(async (req, res) => {
   res.json({ order: serializeOrder(updated), invoicePath: updated.invoicePath });
 });
 
-// Invoices are PII, so the PDF is streamed from private storage behind
-// requireAdminAuth rather than being served as a static file. Regenerates on
-// the fly when the file is missing (older order, cleared disk on a
-// redeploy — free hosts do not keep an ephemeral filesystem between deploys).
+// Invoices are PII, so the PDF is rendered on demand behind requireAdminAuth
+// and streamed straight from memory rather than being served as a static file
+// or parked in shared storage. Nothing is cached on disk: a serverless
+// filesystem does not survive between requests, and the invoice is cheap
+// enough to rebuild each time it is asked for.
 const downloadInvoice = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const order = await prisma.order.findUnique({ where: { id: Number(id) }, include: ORDER_INCLUDE });
   if (!order) throw new ApiError(404, 'Order not found');
 
-  let filePath = invoiceFilePath(order.orderNumber);
-  if (!fs.existsSync(filePath)) {
-    filePath = await buildInvoice(order);
+  const pdf = await buildInvoice(order);
+
+  // Records the first time an invoice was produced for this order, which is
+  // what the admin UI shows; regenerating later must not keep moving it.
+  if (!order.invoiceGeneratedAt) {
     await prisma.order.update({
       where: { id: order.id },
       data: { invoicePath: invoiceApiPath(order.id), invoiceGeneratedAt: new Date() },
@@ -400,8 +405,9 @@ const downloadInvoice = asyncHandler(async (req, res) => {
   const filename = `${toInvoiceNumber(order.orderNumber)}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Content-Length', pdf.length);
   res.setHeader('Cache-Control', 'no-store');
-  fs.createReadStream(filePath).pipe(res);
+  res.end(pdf);
 });
 
 const getTimeline = asyncHandler(async (req, res) => {
