@@ -3,3 +3,7 @@ node_modules/
 uploads/**
 !uploads/**/.gitkeep
 storage/
+
+# Raw customer PII dumped by scripts/exportData.js during the MySQL -> Neon
+# move (names, phones, addresses, order history) — never belongs in git.
+prisma/data-export.json
