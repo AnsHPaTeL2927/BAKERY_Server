@@ -8,6 +8,12 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   PUBLIC_ASSET_URL: z.string().url().optional(),
 
+  // Self-ping keep-alive (see services/keepAliveService.js). Leave
+  // KEEP_ALIVE_URL unset to disable — it should point at this deployment's own
+  // public /health URL, e.g. https://api.example.com/health.
+  KEEP_ALIVE_URL: z.string().url().optional(),
+  KEEP_ALIVE_INTERVAL_MINUTES: z.coerce.number().min(1).default(10),
+
   JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET is too short'),
   JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET is too short'),
   OTP_SESSION_SECRET: z.string().min(16, 'OTP_SESSION_SECRET is too short'),

@@ -10,10 +10,12 @@ const cron = require('node-cron');
 
 const adminRoutes = require('./routes/admin');
 const publicRoutes = require('./routes/public.routes');
+const healthRoutes = require('./routes/health.routes');
 const { publicApiLimiter } = require('./middleware/rateLimiters');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 const { absolutizeUploads } = require('./middleware/absolutizeUploads');
 const { expireStaleOffers } = require('./services/offerExpiryService');
+const { startKeepAlive } = require('./services/keepAliveService');
 
 const app = express();
 
@@ -52,15 +54,23 @@ app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 if (env.NODE_ENV !== 'test') {
-  app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+  // Health checks are hit on a short interval by the uptime pinger; logging
+  // every one of them would bury the real request log.
+  app.use(
+    morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev', {
+      skip: (req) => req.path === '/health' || req.path === '/api/health',
+    }),
+  );
 }
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
 app.use(absolutizeUploads);
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
+// Mounted at both paths so a pinger can target either the bare host or the
+// same /api prefix the rest of the API uses. Registered before the public
+// rate limiter so keep-alive traffic can never be throttled.
+app.use(healthRoutes);
+app.use('/api', healthRoutes);
 
 app.use('/api/admin', adminRoutes);
 app.use('/api', publicApiLimiter, publicRoutes);
@@ -81,4 +91,6 @@ if (env.NODE_ENV !== 'test') {
   cron.schedule('0 0 * * *', () => {
     expireStaleOffers().catch((err) => console.error('[offer-expiry] scheduled run failed:', err));
   });
+
+  startKeepAlive();
 }
