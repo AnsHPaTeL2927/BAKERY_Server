@@ -79,6 +79,13 @@ const getSettings = asyncHandler(async (req, res) => {
   res.json(settings || {});
 });
 
+// Returned even when the row is missing or hidden — the public page keeps its
+// built-in copy as a fallback, so `null` simply means "nothing customised yet".
+const getAbout = asyncHandler(async (_req, res) => {
+  const about = await prisma.aboutSection.findUnique({ where: { id: 1 } });
+  res.json(about && about.status === 'LIVE' ? about : null);
+});
+
 const getTestimonials = asyncHandler(async (req, res) => {
   const testimonials = await prisma.testimonial.findMany({
     where: { status: 'LIVE', approved: true },
@@ -101,6 +108,7 @@ module.exports = {
   getGallery,
   getOffers,
   getSettings,
+  getAbout,
   getTestimonials,
   getHeroBanners,
 };

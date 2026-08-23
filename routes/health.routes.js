@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../config/prisma');
+const { requireOpsSecret } = require('../middleware/opsAuth');
 
 const router = express.Router();
 
@@ -19,9 +20,12 @@ router.get('/health', (_req, res) => {
 });
 
 // Readiness probe — same shape, but also verifies the database connection.
-// Use this one sparingly (manual checks / deploy gates), not as the keep-alive
-// target, since it opens a DB round-trip on every hit.
-router.get('/health/db', async (_req, res) => {
+//
+// Guarded by the ops secret, unlike /health above. Every call opens a database
+// round-trip, so leaving it public hands anyone an unauthenticated, unmetered
+// way to burn the connection pool and compute quota of a pooled serverless
+// Postgres. Uptime monitors should point at /health, which touches nothing.
+router.get('/health/db', requireOpsSecret, async (_req, res) => {
   res.set('Cache-Control', 'no-store');
 
   try {

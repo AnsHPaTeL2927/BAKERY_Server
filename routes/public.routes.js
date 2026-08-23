@@ -16,6 +16,7 @@ router.get('/categories', contentController.getCategories);
 router.get('/gallery', contentController.getGallery);
 router.get('/offers', contentController.getOffers);
 router.get('/settings', contentController.getSettings);
+router.get('/about', contentController.getAbout);
 router.get('/testimonials', contentController.getTestimonials);
 router.get('/hero-banners', contentController.getHeroBanners);
 

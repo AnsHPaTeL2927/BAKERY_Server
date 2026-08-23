@@ -1,6 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+const { ApiError } = require('../middleware/errorHandler');
 const sharp = require('sharp');
 const env = require('../config/env');
 
@@ -19,6 +20,8 @@ const DIMENSIONS = {
   gallery: { width: 1200, height: 1200 },
   category: { width: 600, height: 600 },
   logo: { width: 300, height: 300 },
+  chef: { width: 800, height: 600 },
+  about: { width: 600, height: 600 },
   favicon: { width: 64, height: 64 },
 };
 
@@ -28,6 +31,8 @@ const DIR_BY_MODULE = {
   gallery: 'gallery',
   category: 'categories',
   logo: 'settings',
+  chef: 'about',
+  about: 'about',
   favicon: 'settings',
 };
 
@@ -44,10 +49,23 @@ async function saveProcessedImage(buffer, moduleKey) {
   const dir = DIR_BY_MODULE[moduleKey];
   const filename = `${crypto.randomUUID()}.webp`;
 
-  const processed = await sharp(buffer)
-    .resize(dims.width, dims.height, { fit: 'cover', position: 'centre' })
-    .webp({ quality: 82 })
-    .toBuffer();
+  // The MIME check in middleware/upload.js trusts the browser-declared type,
+  // so a file that is renamed (or mislabelled by the OS) reaches this far and
+  // then fails inside sharp. Left unhandled that surfaces as a generic 500,
+  // which reads as "the site is broken" rather than "this file is not usable".
+  let processed;
+  try {
+    processed = await sharp(buffer)
+      .resize(dims.width, dims.height, { fit: 'cover', position: 'centre' })
+      .webp({ quality: 82 })
+      .toBuffer();
+  } catch (err) {
+    console.warn(`[image] could not decode upload for ${moduleKey}: ${err.message}`);
+    throw new ApiError(
+      400,
+      'This file could not be read as an image. It may be corrupted, or saved in a different format than its name suggests — please re-save it as a JPG, PNG, or WEBP and try again.',
+    );
+  }
 
   if (USE_BLOB) {
     const { put } = require('@vercel/blob');

@@ -272,6 +272,45 @@ model WebsiteSettings {
   @@map("website_settings")
 }
 
+// Single-row (id = 1) content for the public /about page, same pattern as
+// WebsiteSettings. Every field is optional: the page falls back to its built-in
+// copy and illustration for anything left blank, so a half-filled row can never
+// render an empty section.
+model AboutSection {
+  id          Int      @id @default(1)
+  chefPhoto   String?
+  chefHeading String?
+  chefName    String?
+  chefBio     String?  @db.Text
+  image1      String?
+  image1Alt   String?
+  image2      String?
+  image2Alt   String?
+  image3      String?
+  image3Alt   String?
+  status      Status   @default(LIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("about_section")
+}
+
+// Backs the API rate limiters. express-rate-limit's default store keeps its
+// counters in process memory, which on Vercel means every serverless instance
+// counts separately and the limits barely bind — so the counters live here
+// instead, where every instance shares them.
+//
+// `key` is "<limiter>:<client ip>". Rows are disposable: they are rewritten
+// once their window lapses and swept by the daily cron job.
+model RateLimitHit {
+  key       String   @id
+  count     Int      @default(0)
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("rate_limit_hits")
+}
+
 model ContactMessage {
   id           Int           @id @default(autoincrement())
   name         String

@@ -24,6 +24,7 @@ app.set('trust proxy', 1);
 // default same-origin resource policy would have browsers block every <img>
 // load against /uploads.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+// env.FRONTEND_URLS is already normalised to lowercase bare origins.
 const allowedOrigins = [
   ...env.FRONTEND_URLS,
   'http://localhost:5173',
@@ -43,10 +44,11 @@ app.use(
       // *.vercel.app covers the preview deployment each push generates, whose
       // hostname is not known ahead of time and so can never be listed in
       // FRONTEND_URL.
+      const requestOrigin = origin.toLowerCase();
       const isAllowedOrigin =
-        allowedOrigins.includes(origin) ||
-        /\.trycloudflare\.com$/i.test(origin) ||
-        /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
+        allowedOrigins.includes(requestOrigin) ||
+        /\.trycloudflare\.com$/i.test(requestOrigin) ||
+        /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(requestOrigin);
       callback(null, isAllowedOrigin);
     },
     credentials: true,

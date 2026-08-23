@@ -8,6 +8,19 @@ function splitOrigins(value) {
     .filter(Boolean);
 }
 
+// Reduces a configured entry to a bare origin ("https://example.com"), which
+// is the exact form a browser puts in the Origin header. Without this, the
+// natural things to paste into a dashboard env var — a trailing slash, a path,
+// a capitalised host — would each silently never match, producing a CORS
+// failure with nothing in the config that looks wrong.
+function toOrigin(value) {
+  try {
+    return new URL(value).origin.toLowerCase();
+  } catch {
+    return String(value).trim().toLowerCase();
+  }
+}
+
 function isHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -115,6 +128,6 @@ if (data.NODE_ENV === 'production' && !data.BLOB_READ_WRITE_TOKEN) {
 }
 
 // Parsed once here so request handling never re-splits the string.
-data.FRONTEND_URLS = splitOrigins(data.FRONTEND_URL);
+data.FRONTEND_URLS = splitOrigins(data.FRONTEND_URL).map(toOrigin);
 
 module.exports = data;

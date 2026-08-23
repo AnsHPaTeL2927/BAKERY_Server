@@ -21,11 +21,29 @@ function errorHandler(err, req, res, _next) {
     return res.status(err.statusCode).json({ message: err.message, details: err.details });
   }
 
-  if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ message: 'File is too large' });
-  }
-
+  // Multer's own messages ("File too large", "Unexpected field") are written
+  // for developers and tell an admin nothing about how to fix the upload, so
+  // each one is restated in terms of what they should actually do.
   if (err && err.name === 'MulterError') {
+    const { MAX_FILE_SIZE_LABEL } = require('./upload');
+
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      const which = err.field ? `The image for "${err.field}"` : 'That image';
+      return res.status(413).json({
+        message: `${which} is larger than the ${MAX_FILE_SIZE_LABEL} limit. Please compress it or choose a smaller file.`,
+      });
+    }
+
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({
+        message: `This form does not accept a file in "${err.field}". Please use the provided upload fields.`,
+      });
+    }
+
+    if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_PART_COUNT') {
+      return res.status(400).json({ message: 'Too many files in one upload. Please add them a few at a time.' });
+    }
+
     return res.status(400).json({ message: err.message });
   }
 
